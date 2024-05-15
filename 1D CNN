@@ -1,0 +1,201 @@
+# 1 D CNN : 
+
+
+
+import tensorflow as tf
+import numpy as np
+import matplotlib.pyplot as plt
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Input, Conv1D, MaxPooling1D, Flatten, Dense, Reshape, UpSampling1D, Conv1DTranspose
+from sklearn.model_selection import train_test_split
+from keras.callbacks import EarlyStopping, ModelCheckpoint
+from sklearn.metrics import auc
+from tensorflow.keras.activations import relu
+from keras.callbacks import LearningRateScheduler
+
+def reshape_data(file_name, n_properties): #data is reshaped to fit the cnn
+    final_data = []
+    raw_data = np.load(file_name, allow_pickle=True)
+    print('Length of raw data:', len(raw_data))
+    final_data = np.reshape(raw_data, (-1, raw_data.shape[1], n_properties))
+    final_data = final_data.astype('float32') / 255.0  # Normalize values to be between 0 and 1
+    print('Length of processed data:', len(final_data))
+    return final_data, final_data.shape[1:]
+
+
+
+
+
+
+
+
+
+class Autoencoder():
+    def __init__(self, input_shape, units):
+        self.input_shape = input_shape
+        self.seq_length = input_shape[0]
+        self.n_properties = input_shape[1]
+        self.hp_units = units
+
+    def build_model(self):
+        input_layer = Input(shape=self.input_shape)
+        x = Conv1D(filters=64, kernel_size=4, padding='same', activation='relu')(input_layer)
+        #hidden layers:
+        x = AveragePooling1D(pool_size=2,strides=(2), padding='same')(x)
+        x = Conv1D(filters=32, kernel_size=4, padding='same', activation='relu')(x)
+        x = AveragePooling1D(pool_size=2,strides=(2), padding='same')(x)
+        x = Conv1D(filters=16, kernel_size=4, padding='same', activation='relu')(x)
+        x = AveragePooling1D(pool_size=2,strides=(2), padding='same')(x)
+
+        x_flat= Flatten() (x)
+        x=Dense(16, activation= lambda x:relu(x, alpha=alpha_init))(x_flat)
+
+        x = UpSampling1D(size=2)(x)
+        x = Conv1D(filters=32, kernel_size=4, padding='same', activation='relu')(x)
+        x = UpSampling1D(size=2)(x)
+        x = Conv1D(filters=64, kernel_size=4, padding='same', activation='relu')(x)
+
+        x=Conv1DTranspose(filters=self.n_properties, kernel_size=4, padding='same')(x)
+
+        self.model = Model(input_layer, x)
+        print('Latent space dimension:', self.hp_units)
+
+    def train(self, train_data, test_data, epochs): #training method
+        learning_rate = 0.001 #a dynamic learning rate can also be tried
+        optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+        self.model.compile(optimizer=optimizer, loss='mse', metrics=['accuracy'])
+
+        early_stopping = EarlyStopping(monitor='val_loss', patience=20)
+        checkpoint_callback = ModelCheckpoint(filepath='weights/weights_epoch_{epoch:02d}.h5', save_freq='epoch', period=5) #checkpoint to see if there is overtraining
+        self.history = self.model.fit(train_data, train_data, epochs=epochs, batch_size=500,
+                                       validation_data=(test_data, test_data),
+                                       callbacks=[early_stopping, checkpoint_callback])
+
+        self.train_loss = self.history.history['loss']
+        self.val_loss = self.history.history['val_loss']
+
+        self.model.save('models')
+
+
+    def plot_loss(self): #for plotting the losses
+        plt.plot(self.train_loss, label='Training Loss')
+        plt.plot(self.val_loss, label='Validation Loss')
+        plt.legend()
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.title('Training and Validation Losses')
+        plt.savefig('/isilon/data/users/esecilmi/2023/FALL_2023/KASIM/ARCHITECTURE/figs_sablon3/Training_Validation_Losses')
+        plt.clf()
+
+    def mse(self, test_data, anomaly_data): #mse is used as the loss function
+        reconstructed_anomaly = self.model.predict(anomaly_data)
+        anomaly_loss = np.mean(np.square(anomaly_data - reconstructed_anomaly), axis=(1,2,3))
+
+        #self.anomaly_scores = tf.keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.NONE)(anomaly_data, reconstructed_anomaly).numpy()
+        reconstructed_test = self.model.predict(test_data)
+        test_loss = np.mean(np.square(test_data - reconstructed_test), axis=(1,2,3))
+        #self.test_scores = tf.keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.NONE)(test_data, reconstructed_test).numpy()
+        self.anomaly_scores = anomaly_loss
+        self.test_scores = test_loss
+        print('anomaly MSE (loss) over all anomalous inputs: ', np.mean(anomaly_loss))
+        print('not anomaly MSE (loss) over all non-anomalous inputs: ', np.mean(test_loss))
+
+
+        def plot_roc(self, test_data, anomaly_data):#roc curve is a good way to measure the performance
+        all_data = np.concatenate((test_data, anomaly_data), axis=0)
+        data_pred = self.model.predict(all_data)
+        data_loss = np.mean(np.square(all_data - data_pred), axis=(1,2,3))
+        thresholds = np.linspace(np.min(data_loss[len(test_data):]), np.max(data_loss[:len(test_data)]), num=500)
+        tprs = []
+        fprs = []
+        for threshold in thresholds:
+            pred_signal = (data_loss > threshold)
+            true_signal = np.ones_like(pred_signal)
+            true_signal[:len(test_data)] = 0  # The first len(light_data) events are background, the rest are signal
+            tp = np.sum(np.logical_and(pred_signal, true_signal))
+            fp = np.sum(np.logical_and(pred_signal, 1 - true_signal))
+            tn = np.sum(np.logical_and(1 - pred_signal, 1 - true_signal))
+            fn = np.sum(np.logical_and(1 - pred_signal, true_signal))
+            tpr = tp / (tp + fn)
+            fpr = fp / (fp + tn)
+            tprs.append(tpr)
+            fprs.append(fpr)
+
+        plt.figure()
+        plt.plot(tprs, fprs, label='Autoencoder')
+        plt.plot([0, 1], [0, 1], 'k--', label='Random guess')
+        plt.xlabel('False positive rate')
+        plt.ylabel('True positive rate')
+        plt.title('Receiver operating characteristic (ROC) curve')
+        plt.legend()
+        plt.savefig("/isilon/data/users/esecilmi/2023/FALL_2023/KASIM/ARCHITECTURE/figs_sablon3/ROC")
+        plt.clf()
+
+        auc_score = auc(fprs, tprs)
+        print('AUC: {:.3f}'.format(auc_score))
+
+    def plot_example(self, test_data, properties, title): #plotting one example jet
+        n_epochs = len(self.train_loss)
+        n_files = round(n_epochs / 5)
+        example_norm = test_data[8].reshape(self.input_shape)
+
+        for j in range(len(properties)):
+            reco = []
+            squared_err = []
+
+            fig, axs = plt.subplots(n_files + 1, 2, figsize=(15, 5 * n_files + 5))
+            max_value = np.max(example_norm[:,:,j])
+            min_value = np.min(example_norm[:,:,j])
+            axs[0, 0].imshow(example_norm[:,:,j], cmap='viridis', vmax=max_value, vmin=min_value)
+            axs[0, 0].set_title('Input ' + title + ' Jet ' + properties[j])
+            axs[0, 1].axis('off')
+
+            for i in range(n_files):
+                weight_file = '/isilon/data/users/esecilmi/2023/FALL_2023/KASIM/weights/weights_epoch_{:02d}.h5'.format((i + 1) * 5)
+                weight_model = tf.keras.models.load_model(weight_file, custom_objects={'<lambda>': lambda x: relu(x, alpha=0.5)})
+                reco_ex = weight_model.predict(example_norm.reshape(1, self.pix, self.pix, self.n_properties)).reshape(self.input_shape)
+                reco.append(reco_ex)
+
+                squared_err.append(((example_norm - reco[i])**2).reshape(self.pix, self.pix, self.n_properties)[:, :, 0])
+
+                axs[i + 1, 0].imshow(reco[i][:, :, j].reshape((self.pix, self.pix, 1)), cmap='viridis')
+                axs[i + 1, 0].set_title('Reconstructed' + title + ' Jet (Epoch ' + str((i+1)*5) + ')')
+
+                axs[i + 1, 1].imshow(squared_err[i], cmap='viridis')
+                axs[i + 1, 1].set_title('Sq2 Error: (X-f(X))^2 (Epoch ' + str((i+1)*5) + ')')
+
+            plt.tight_layout()
+            plt.savefig("/isilon/data/users/esecilmi/2023/FALL_2023/KASIM/ARCHITECTURE/figs_sablon3/RECO_Example" + properties[j] + ' ' + title)
+            plt.show()
+            plt.clf()
+
+    def run_all(self, train_data, test_data, anomaly_data, epochs, properties): #to use all the methods
+        self.build_model()
+        self.train(train_data, test_data, epochs = epochs)
+        self.plot_loss()
+        self.mse(test_data, anomaly_data)
+        self.plot_anomaly_score_distribution()
+        self.plot_roc(test_data, anomaly_data)
+        # self.plot_example(test_data, properties, 'qcd')
+        # self.plot_example(anomaly_data, properties, 'wjet')
+
+
+
+
+
+# Important parameters
+epochs = 30
+wjet_file = 'output_array-w-61440.npy'
+qcd_file = 'output_array-qcd-61440.npy'
+properties = ['pdgId']  # Must be in order of file
+n = len(properties)  # Number of properties
+hp_units = 32
+
+# data input
+qcd_data, input_shape = reshape_data(qcd_file, n)
+train_qcd, test_qcd = train_test_split(qcd_data, test_size=0.5)
+wjet_data = reshape_data(wjet_file, n)[0]
+
+# Initialize and run the autoencoder
+model = Autoencoder(input_shape, hp_units)
+model.train(train_qcd, test_qcd, epochs=epochs)
