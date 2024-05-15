@@ -1,0 +1,92 @@
+
+class GraphConvAutoencoder():
+    def __init__(self, input_shape, units):
+        self.input_shape = input_shape
+        self.pix = input_shape[0]
+        self.n_properties = input_shape[2]
+        self.hp_units = units
+
+    def build_model(self):
+        input_layer = Input(shape=self.input_shape)
+        encoded = self._construct_encoder(input_layer)
+        decoded = self._construct_decoder(encoded)
+        self.model = Model(input_layer, decoded)
+
+    def _construct_encoder(self, inputs):
+        # Convert 2D images to graph structure
+        adj_matrix = self._construct_adjacency_matrix()
+
+        # Graph Convolutional Encoder Layers
+        x = GraphConvLayer(1024)(inputs, adj_matrix)
+        x = GraphConvLayer(256)(x, adj_matrix)
+        x = GraphConvLayer(64)(x, adj_matrix)
+        return x
+
+    def _construct_decoder(self, encoded):
+        # Graph Convolutional Decoder Layers
+        adj_matrix = self._construct_adjacency_matrix()
+        x = GraphConvLayer(256)(encoded, adj_matrix)
+        x = GraphConvLayer(1024)(x, adj_matrix)
+
+
+    def create_adjacency_matrix(image_shape):
+    height, width = image_shape
+    num_nodes = height * width
+    adjacency_matrix = np.zeros((num_nodes, num_nodes), dtype=int)
+
+    # Define connectivity between neighboring pixels
+    for i in range(height):
+        for j in range(width):
+            node_index = i * width + j  # Index of current node
+            # Connect to top neighbor
+            if i > 0:
+                adjacency_matrix[node_index, node_index - width] = 1
+            # Connect to bottom neighbor
+            if i < height - 1:
+                adjacency_matrix[node_index, node_index + width] = 1
+            # Connect to left neighbor
+            if j > 0:
+                adjacency_matrix[node_index, node_index - 1] = 1
+            # Connect to right neighbor
+            if j < width - 1:
+                adjacency_matrix[node_index, node_index + 1] = 1
+
+    return adjacency_matrix
+
+
+
+
+
+
+# Load and preprocess image data
+input_images = qcd_data  # Load input images
+#adj_matrices = create_adjacency_matrix(-1,32,32,1) ...  # Construct adjacency matrices for input images--> at the end 
+
+
+# Feed input images and adjacency matrices to the model
+output_images = model.predict([input_images, adj_matrices])  # Assuming the model expects both inputs
+
+
+epochs = 30
+
+wjet_file = '/isilon/data/users/esecilmi/2023/FALL_2023/KASIM/1D/pT/output_array-w-61440.npy'
+qcd_file = '/isilon/data/users/esecilmi/2023/FALL_2023/KASIM/1D/pT/output_array-qcd-61440.npy'
+#HtoBB_file= '/isilon/data/users/esecilmi/2023/FALL_2023/KASIM/1D/pdgId/output_array-5120-HtoBB.npy'
+properties = ['pT'] # must be in order of file
+
+n = len(properties) # number of properties
+
+hp_units = 32
+
+''''''''''''''''''''''''''''''''''''
+
+qcd_data, input_shape = reshape_data(qcd_file, n)
+train_qcd, test_qcd = train_test_split(qcd_data, test_size=0.5)
+wjet_data = reshape_data(wjet_file, n)[0]
+
+plot_property_distribution(qcd_data, wjet_data, properties)
+model = Autoencoder(input_shape, hp_units)
+model.run_all(train_qcd, test_qcd, wjet_data, epochs, properties)
+
+
+
